@@ -11,8 +11,9 @@ from sklearn.metrics import classification_report, confusion_matrix, ConfusionMa
 import time, os
 
 # 1. Load data
-DATA_PATH = 'ml/data/synthetic_flows.csv'
+DATA_PATH = 'ml/data/real_flows.csv'
 df = pd.read_csv(DATA_PATH)
+df = df[df["label"] != "OTHER"]
 
 FEATURES = ['protocol', 'src_port', 'dst_port', 'pkt_count',
             'byte_count', 'duration_ms', 'avg_ipt_ms']
@@ -23,7 +24,7 @@ le = LabelEncoder()
 y_enc = le.fit_transform(y)
 
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y_enc, test_size=0.2, random_state=42, stratify=y_enc)
+    X, y_enc, test_size=0.2, random_state=42)
 
 # 2. Define models
 models = {
@@ -62,7 +63,7 @@ for name, model in models.items():
     print(f"  CV Accuracy:  {cv_scores.mean():.3f} ± {cv_scores.std():.3f}")
     print(f"  Train time:   {train_time:.3f}s")
     print(f"  Infer time:   {infer_time:.4f} ms/flow")
-    print(classification_report(y_test, y_pred, target_names=le.classes_))
+    print(classification_report(y_test, y_pred, ))
 
 # 4. Confusion matrices
 fig, axes = plt.subplots(1, len(models), figsize=(16, 4))
