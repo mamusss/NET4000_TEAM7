@@ -52,19 +52,19 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-log "Compiling tc_flow.bpf.c"
+log "Compiling tc_count.bpf.c"
 clang -O2 -g -target bpf \
-  -c "$SRC_DIR/tc_flow.bpf.c" \
-  -o "$SRC_DIR/tc_flow.bpf.o" \
+  -c "$SRC_DIR/tc_count.bpf.c" \
+  -o "$SRC_DIR/tc_count.bpf.o" \
   -I "$SRC_DIR/"
-log "Compiled: src/tc_flow.bpf.o"
+log "Compiled: src/tc_count.bpf.o"
 
-log "Attaching tc_flow to $IFACE ingress (pref=$FILTER_PREF)"
+log "Attaching tc_count to $IFACE ingress (pref=$FILTER_PREF)"
 if [[ $had_clsact -eq 0 ]]; then
   tc qdisc add dev "$IFACE" clsact
 fi
 tc filter replace dev "$IFACE" ingress pref "$FILTER_PREF" bpf direct-action \
-  obj "$SRC_DIR/tc_flow.bpf.o" sec tc
+  obj "$SRC_DIR/tc_count.bpf.o" sec tc
 
 log "Capture window: ${DURATION}s"
 if (( DURATION > 5 )); then
