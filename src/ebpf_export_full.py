@@ -30,6 +30,19 @@ def check_root():
     if os.geteuid() != 0:
         die("Must run as root (use sudo)")
 
+KERNEL_LABELS = {
+    0: "OTHER",
+    1: "ICMP",
+    2: "HTTP",
+    3: "HTTPS",
+    4: "DNS",
+    5: "SSH",
+    6: "IPERF"
+}
+
+def kernel_label_name(val):
+    return KERNEL_LABELS.get(val, "OTHER")
+
 @dataclass
 class FlowRecord:
     protocol: int
@@ -43,6 +56,7 @@ class FlowRecord:
     avg_ipt_ms: float
     min_ipt_ms: float
     max_ipt_ms: float
+    kernel_label: str
     label: str
 
 def label_flow(protocol, src_port, dst_port):
@@ -90,7 +104,7 @@ def parse_flows_from_map(raw_entries):
             if len(key) < 16:
                 continue
                 
-            if len(value) < 56:
+            if len(value) < 64:
                 continue
             
             src_ip = parse_hex(key[0]) | (parse_hex(key[1]) << 8) | (parse_hex(key[2]) << 16) | (parse_hex(key[3]) << 24)
@@ -98,6 +112,8 @@ def parse_flows_from_map(raw_entries):
             protocol = parse_hex(key[8])
             src_port = parse_hex(key[12]) | (parse_hex(key[13]) << 8)
             dst_port = parse_hex(key[14]) | (parse_hex(key[15]) << 8)
+            
+            kernel_label_val = parse_hex(value[56]) if len(value) > 56 else 0
             
             def le64(b, offset):
                 if offset + 8 > len(b):
@@ -135,6 +151,7 @@ def parse_flows_from_map(raw_entries):
                 avg_ipt_ms=round(avg_ipt_ms, 3),
                 min_ipt_ms=round(min_ipt_ms, 3),
                 max_ipt_ms=round(max_ipt_ms, 3),
+                kernel_label=kernel_label_name(kernel_label_val),
                 label=label_flow(protocol, src_port, dst_port)
             ))
         except Exception as e:
@@ -187,7 +204,7 @@ def export(flows, output_path):
     
     fieldnames = ["protocol", "src_ip", "dst_ip", "src_port", "dst_port", 
                   "pkt_count", "byte_count", "duration_ms", "avg_ipt_ms", 
-                  "min_ipt_ms", "max_ipt_ms", "label"]
+                  "min_ipt_ms", "max_ipt_ms", "kernel_label", "label"]
     
     with open(output_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
@@ -205,6 +222,7 @@ def export(flows, output_path):
                 "avg_ipt_ms": flow.avg_ipt_ms,
                 "min_ipt_ms": flow.min_ipt_ms,
                 "max_ipt_ms": flow.max_ipt_ms,
+                "kernel_label": flow.kernel_label,
                 "label": flow.label
             })
     

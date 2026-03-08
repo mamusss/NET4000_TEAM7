@@ -17,16 +17,25 @@ sudo bash src/test_ebpf_all_traffic.sh lo 20 ml/data/real_flows.csv
 `real_flows.csv` with columns:
 - protocol (1=ICMP, 6=TCP, 17=UDP)
 - src_ip, dst_ip, src_port, dst_port
-- pkt_count, byte_count, duration_ms, avg_ipt_ms
-- label (HTTP, DNS, ICMP, SSH, etc.)
+- pkt_count, byte_count, duration_ms, avg_ipt_ms, min_ipt_ms, max_ipt_ms
+- kernel_label (classification in-kernel)
+- label (classification by ML in user-space)
 
-## Files
+## Classifier Comparison
 
-- `run_ebpf_export.sh` - Main capture script
-- `ebpf_export.py` - Python exporter
-- `tc_flow.bpf.c` - eBPF program (3-tuple)
-- `tc_flow_full.bpf.c` - eBPF program (5-tuple)
-- `test_ebpf_all_traffic.sh` - Test with all traffic types
+Compare kernel-space (rule-based) vs user-space (ML) classification:
+
+```bash
+./ml_env/bin/python ml/compare_classifiers.py --input ml/data/real_flows.csv
+```
+
+Output: `ml/results/classifier_comparison.png`
+
+## ML Training
+
+```bash
+./ml_env/bin/python ml/train.py
+```
 
 ## RTT Benchmark
 
