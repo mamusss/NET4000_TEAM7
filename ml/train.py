@@ -15,8 +15,25 @@ DATA_PATH = 'ml/data/real_flows.csv'
 df = pd.read_csv(DATA_PATH)
 df = df[df["label"] != "OTHER"]
 
-FEATURES = ['protocol', 'src_port', 'dst_port', 'pkt_count',
-            'byte_count', 'duration_ms', 'avg_ipt_ms']
+# Convert IP addresses to numeric
+def ip_to_int(ip):
+    try:
+        return sum(int(x) << (24 - 8 * i) for i, x in enumerate(ip.split('.')))
+    except:
+        return 0
+
+if 'src_ip' in df.columns:
+    df['src_ip_num'] = df['src_ip'].apply(ip_to_int)
+    df['dst_ip_num'] = df['dst_ip'].apply(ip_to_int)
+    FEATURES = ['protocol', 'src_port', 'dst_port', 'pkt_count',
+                'byte_count', 'duration_ms', 'avg_ipt_ms', 
+                'min_ipt_ms', 'max_ipt_ms']
+else:
+    df['src_ip_num'] = 0
+    df['dst_ip_num'] = 0
+    FEATURES = ['protocol', 'src_port', 'dst_port', 'pkt_count',
+                'byte_count', 'duration_ms', 'avg_ipt_ms']
+
 X = df[FEATURES]
 y = df['label']
 
