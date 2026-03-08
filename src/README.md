@@ -34,4 +34,51 @@ sudo bash src/test_ebpf_all_traffic.sh lo 20 ml/data/real_flows.csv
 sudo bash scripts/bench/compare_rtt.sh lo 127.0.0.1 30
 ```
 
-Outputs: `runs/rtt_compare.csv`, `ml/results/rtt_compare.png`
+---
+
+## Developer Guide
+
+### Create New eBPF Program
+
+```c
+#include "bpf/vmlinux.h"
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
+
+struct { ... } my_map SEC(".maps");
+
+SEC("tc")
+int my_prog(struct __sk_buff *skb) {
+    // process packet
+    return BPF_OK;
+}
+
+char LICENSE[] SEC("license") = "GPL";
+```
+
+### Compile
+
+```bash
+clang -O2 -g -target bpf -c src/my_prog.bpf.c -o src/my_prog.bpf.o -I./src
+```
+
+### Attach Manually
+
+```bash
+sudo tc qdisc replace dev lo clsact
+sudo tc filter replace dev lo ingress bpf da obj src/my_prog.bpf.o sec tc
+```
+
+### Verify
+
+```bash
+sudo tc filter show dev lo ingress
+sudo bpftool map show | grep my_map
+```
+
+### Cleanup
+
+```bash
+sudo tc filter del dev lo ingress
+sudo tc qdisc del dev lo clsact
+```
