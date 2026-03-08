@@ -66,10 +66,14 @@ for name, model in models.items():
     print(classification_report(y_test, y_pred, ))
 
 # 4. Confusion matrices
+all_preds = np.concatenate([res['y_pred'] for res in results.values()])
+unique_labels = np.unique(np.concatenate([y_test, all_preds]))
+display_labels = [le.classes_[i] for i in unique_labels]
+
 fig, axes = plt.subplots(1, len(models), figsize=(16, 4))
 for ax, (name, res) in zip(axes, results.items()):
-    cm = confusion_matrix(y_test, res['y_pred'])
-    ConfusionMatrixDisplay(cm, display_labels=le.classes_).plot(ax=ax, colorbar=False)
+    cm = confusion_matrix(y_test, res['y_pred'], labels=unique_labels)
+    ConfusionMatrixDisplay(cm, display_labels=display_labels).plot(ax=ax, colorbar=False)
     ax.set_title(name)
 plt.tight_layout()
 plt.savefig('ml/results/confusion_matrices.png', dpi=150)
