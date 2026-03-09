@@ -1,112 +1,36 @@
-# eBPF (tc) Mini Guide
+# eBPF Flow Capture Pipeline
 
-Write → Compile → Attach → Verify → View Results
+Capture and classify network traffic using eBPF.
 
-> **Prerequisite:** Your environment must already have clang, bpftool, tc, and vmlinux.h generation configured and working.
-
----
-
-## Step 1: Create a New eBPF TC Program
-
-Create a new file:
-```
-src/<name>.bpf.c
-```
-### Minimum Required Includes
-
-```c
-#include "bpf/vmlinux.h"      // BTF types (generated vmlinux.h)
-#include <bpf/bpf_helpers.h>  // SEC(), helpers, map macros
-#include <bpf/bpf_endian.h>   // optional: byte order helpers
-```
-
-### About These Headers
-
-- **vmlinux.h:** Generated from your running kernel's BTF. Lets you use kernel types safely (CO-RE style approach).
-- **bpf_helpers.h:** Provides the `SEC()` macro and helper function declarations.
-
----
-## Step 2: Compile the .bpf.c into a bpf.o
-
-Run from the repo root (important so `-I./src` finds `src/bpf/vmlinux.h`):
+## Quick Start
 
 ```bash
-clang -O2 -g -target bpf -c src/<file-name>.bpf.c -o src/<file-name>.bpf.o -I./src
-ls -l src/<file-name>.bpf.o
+sudo bash src/test_ebpf_all_traffic.sh lo 20 ml/data/real_flows.csv
 ```
 
----
+## What It Does
 
-## Step 3: Attach to a Network Interface Using tc
+1. Captures network flows with eBPF
+2. Classifies in kernel (rule-based) and user-space (ML)
+3. Compares both classifiers with statistics
+4. Outputs results to CSV and plots
 
-### 1. Pick Your Interface
-
-List available interfaces:
-```bash
-ip link
-```
-
-Examples: `wlo1`, `eth0`, `ens3`
-
-### 2. Attach to Ingress
+## Run Separately
 
 ```bash
-sudo tc qdisc replace dev wlo1 clsact
-sudo tc filter replace dev wlo1 ingress bpf da obj src/tc_count.bpf.o sec tc
+# Capture
+sudo bash src/run_ebpf_export.sh lo 30 ml/data/real_flows.csv
+
+# Compare
+./ml_env/bin/python ml/compare_classifiers.py
+
+# Train
+./ml_env/bin/python ml/train.py
 ```
 
-### What This Does
+## Output Files
 
-- **clsact:** Creates tc hooks for ingress + egress
-- **tc filter ... ingress bpf:** Attaches your eBPF program at the ingress hook
-- **da (direct-action):** The eBPF return code directly decides what happens (pass/drop/etc.)
-
----
-
-## Step 4: Verify It's Attached
-
-```bash
-sudo tc qdisc show dev wlo1
-sudo tc filter show dev wlo1 ingress
-```
-
-You should see:
-- ✓ `qdisc clsact` is present on the interface
-- ✓ A `bpf` filter is attached to ingress
-- ✓ `jited` indicates the program was JIT-compiled by the kernel
-
----
-
-## Step 5: View Results (Map Counters)
-
-### Find the Map ID
-
-```bash
-sudo bpftool map show | grep "name pkt_cnt"
-```
-
-### Dump Per-CPU Counters
-
-Replace `3` with your actual map ID:
-
-```bash
-sudo bpftool map dump id 3
-```
-
----
-
-## Step 6: Cleanup
-
-### Remove the Ingress Filter
-
-```bash
-sudo tc filter del dev wlo1 ingress
-```
-
-### Remove the clsact qdisc
-
-```bash
-sudo tc qdisc del dev wlo1 clsact
-```
-
-This removes all hooks from the interface.
+- `ml/data/real_flows.csv` - Flow data
+- `ml/results/classifier_comparison.png` - Kernel vs ML
+- `ml/results/confusion_matrices.png` - ML performance
+- `ml/results/accuracy_vs_overhead.png` - Accuracy vs latency
