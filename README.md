@@ -5,21 +5,16 @@ Capture and classify network traffic using eBPF for ML training.
 ## Quick Start
 
 ```bash
-# Capture traffic flows
-sudo bash src/run_ebpf_export.sh lo 30 ml/data/real_flows.csv
+# Full pipeline
+sudo bash src/test_ebpf_all_traffic.sh lo 20 ml/data/real_flows.csv
 
-# Train ML model
-python3 ml/train.py
+# Train ML
+./ml_env/bin/python ml/train.py
 ```
 
 ## Project Structure
 
-- `src/` - eBPF programs and capture scripts
-- `ml/` - ML training and data
-- `scripts/traffic/` - Traffic generation
-- `scripts/bench/` - Benchmarks
-
-## See Also
-
-- `src/README.md` - eBPF flow capture details
-- `scripts/traffic/README.md` - Traffic generation details
+- [src/](./src) - eBPF programs and capture scripts
+- [ml/](./ml) - ML training and data
+- [scripts/traffic/](./scripts/traffic) - Traffic generation
+- [scripts/bench/](./scripts/bench) - Benchmarks

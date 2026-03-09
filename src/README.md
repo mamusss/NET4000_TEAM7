@@ -1,50 +1,36 @@
 # eBPF Flow Capture Pipeline
 
-Capture network traffic and classify flows using eBPF.
+Capture and classify network traffic using eBPF.
 
-## Quick Start (One Command)
+## Quick Start
 
 ```bash
 sudo bash src/test_ebpf_all_traffic.sh lo 20 ml/data/real_flows.csv
 ```
 
-This captures traffic, runs ML classification, and produces results.
+## What It Does
 
-## What Happens
+1. Captures network flows with eBPF
+2. Classifies in kernel (rule-based) and user-space (ML)
+3. Compares both classifiers with statistics
+4. Outputs results to CSV and plots
 
-1. eBPF program captures network flows (kernel-space)
-2. Flows are classified rule-based in kernel
-3. ML model classifies in user-space
-4. Results saved to CSV
-
-## Run Components Separately
+## Run Separately
 
 ```bash
-# Capture traffic only
+# Capture
 sudo bash src/run_ebpf_export.sh lo 30 ml/data/real_flows.csv
 
-# Compare classifiers (kernel vs ML)
+# Compare
 ./ml_env/bin/python ml/compare_classifiers.py
 
-# Train ML model
+# Train
 ./ml_env/bin/python ml/train.py
 ```
 
 ## Output Files
 
-| File | Description |
-|------|-------------|
-| `ml/data/real_flows.csv` | Captured flow data with classifications |
-| `ml/results/classifier_comparison.png` | Kernel vs ML comparison |
-| `ml/results/confusion_matrices.png` | ML model performance |
-| `ml/results/accuracy_vs_overhead.png` | Model accuracy vs latency |
-
-## CSV Format
-
-```
-protocol,src_ip,dst_ip,src_port,dst_port,pkt_count,byte_count,
-duration_ms,avg_ipt_ms,min_ipt_ms,max_ipt_ms,kernel_label,label
-```
-
-- `kernel_label` = classification from eBPF (rule-based)
-- `label` = classification from ML model
+- `ml/data/real_flows.csv` - Flow data
+- `ml/results/classifier_comparison.png` - Kernel vs ML
+- `ml/results/confusion_matrices.png` - ML performance
+- `ml/results/accuracy_vs_overhead.png` - Accuracy vs latency
