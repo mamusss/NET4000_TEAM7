@@ -1,93 +1,50 @@
-# eBPF Flow Capture
+# eBPF Flow Capture Pipeline
 
-Capture network traffic flows for ML training using eBPF.
+Capture network traffic and classify flows using eBPF.
 
-## Quick Start
+## Quick Start (One Command)
 
 ```bash
-# Capture 30 seconds of traffic on loopback
-sudo bash src/run_ebpf_export.sh lo 30 ml/data/real_flows.csv
-
-# Or run test with all traffic types
 sudo bash src/test_ebpf_all_traffic.sh lo 20 ml/data/real_flows.csv
 ```
 
-## Output
+This captures traffic, runs ML classification, and produces results.
 
-`real_flows.csv` with columns:
-- protocol (1=ICMP, 6=TCP, 17=UDP)
-- src_ip, dst_ip, src_port, dst_port
-- pkt_count, byte_count, duration_ms, avg_ipt_ms, min_ipt_ms, max_ipt_ms
-- kernel_label (classification in-kernel)
-- label (classification by ML in user-space)
+## What Happens
 
-## Classifier Comparison
+1. eBPF program captures network flows (kernel-space)
+2. Flows are classified rule-based in kernel
+3. ML model classifies in user-space
+4. Results saved to CSV
 
-Compare kernel-space (rule-based) vs user-space (ML) classification:
+## Run Components Separately
 
 ```bash
-./ml_env/bin/python ml/compare_classifiers.py --input ml/data/real_flows.csv
-```
+# Capture traffic only
+sudo bash src/run_ebpf_export.sh lo 30 ml/data/real_flows.csv
 
-Output: `ml/results/classifier_comparison.png`
+# Compare classifiers (kernel vs ML)
+./ml_env/bin/python ml/compare_classifiers.py
 
-## ML Training
-
-```bash
+# Train ML model
 ./ml_env/bin/python ml/train.py
 ```
 
-## RTT Benchmark
+## Output Files
 
-```bash
-sudo bash scripts/bench/compare_rtt.sh lo 127.0.0.1 30
+| File | Description |
+|------|-------------|
+| `ml/data/real_flows.csv` | Captured flow data with classifications |
+| `ml/results/classifier_comparison.png` | Kernel vs ML comparison |
+| `ml/results/confusion_matrices.png` | ML model performance |
+| `ml/results/accuracy_vs_overhead.png` | Model accuracy vs latency |
+
+## CSV Format
+
+```
+protocol,src_ip,dst_ip,src_port,dst_port,pkt_count,byte_count,
+duration_ms,avg_ipt_ms,min_ipt_ms,max_ipt_ms,kernel_label,label
 ```
 
----
-
-## Developer Guide
-
-### Create New eBPF Program
-
-```c
-#include "bpf/vmlinux.h"
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_endian.h>
-
-struct { ... } my_map SEC(".maps");
-
-SEC("tc")
-int my_prog(struct __sk_buff *skb) {
-    // process packet
-    return BPF_OK;
-}
-
-char LICENSE[] SEC("license") = "GPL";
-```
-
-### Compile
-
-```bash
-clang -O2 -g -target bpf -c src/my_prog.bpf.c -o src/my_prog.bpf.o -I./src
-```
-
-### Attach Manually
-
-```bash
-sudo tc qdisc replace dev lo clsact
-sudo tc filter replace dev lo ingress bpf da obj src/my_prog.bpf.o sec tc
-```
-
-### Verify
-
-```bash
-sudo tc filter show dev lo ingress
-sudo bpftool map show | grep my_map
-```
-
-### Cleanup
-
-```bash
-sudo tc filter del dev lo ingress
-sudo tc qdisc del dev lo clsact
-```
+- `kernel_label` = classification from eBPF (rule-based)
+- `label` = classification from ML model
