@@ -1,6 +1,6 @@
 # eBPF Flow Capture Pipeline
 
-Capture and classify network traffic using eBPF.
+Capture and classify network traffic using eBPF with real-time threat detection.
 
 ## Quick Start
 
@@ -11,26 +11,38 @@ sudo bash src/test_ebpf_all_traffic.sh lo 20 ml/data/real_flows.csv
 ## What It Does
 
 1. Captures network flows with eBPF
-2. Classifies in kernel (rule-based) and user-space (ML)
-3. Compares both classifiers with statistics
-4. Outputs results to CSV and plots
+2. Classifies traffic (HTTP, DNS, SSH, ICMP, etc.)
+3. Detects threats in real-time (port scan, rate limiting)
+4. Compares kernel vs ML classification
 
 ## Run Separately
 
 ```bash
-# Capture
+# Capture traffic
 sudo bash src/run_ebpf_export.sh lo 30 ml/data/real_flows.csv
 
-# Compare
+# Compare classifiers
 ./ml_env/bin/python ml/compare_classifiers.py
 
-# Train
+# Train ML model
 ./ml_env/bin/python ml/train.py
 ```
 
 ## Output Files
 
-- `ml/data/real_flows.csv` - Flow data
-- `ml/results/classifier_comparison.png` - Kernel vs ML
-- `ml/results/confusion_matrices.png` - ML performance
-- `ml/results/accuracy_vs_overhead.png` - Accuracy vs latency
+| File | Description |
+|------|-------------|
+| `ml/data/real_flows.csv` | Flow data with classifications |
+| `ml/results/classifier_comparison.png` | Kernel vs ML comparison |
+| `ml/results/confusion_matrices.png` | ML performance |
+| `ml/results/accuracy_vs_overhead.png` | Accuracy vs latency |
+
+## CSV Format
+
+```
+protocol,src_ip,dst_ip,src_port,dst_port,pkt_count,...,kernel_label,threat,label
+```
+
+- `kernel_label` - Rule-based classification in kernel
+- `threat` - Detected threats (none, port_scan, rate_limit)
+- `label` - ML classification
