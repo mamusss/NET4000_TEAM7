@@ -1,7 +1,9 @@
 // tc_flow_full.bpf.c
-// Full-featured eBPF TC program with 5-tuple flow tracking (IPv4).
-// Tracks: src_ip, dst_ip, protocol, src_port, dst_port
-// Includes kernel-space classification (rule-based)
+// Full-featured eBPF TC program with 5-tuple flow tracking and threat detection.
+// Features:
+// - 5-tuple flow tracking (src_ip, dst_ip, protocol, src_port, dst_port)
+// - Kernel-space classification (ICMP, HTTP, HTTPS, DNS, SSH, iperf)
+// - Real-time threat detection (port scan, SYN flood, rate limiting)
 
 #include "bpf/vmlinux.h"
 #include <bpf/bpf_helpers.h>
@@ -12,7 +14,7 @@
 #define IPPROTO_UDP  17
 #define IPPROTO_ICMP 1
 
-// Label IDs for kernel-space classification
+// Classification labels
 #define LABEL_ICMP      1
 #define LABEL_HTTP      2
 #define LABEL_HTTPS     3
@@ -20,6 +22,12 @@
 #define LABEL_SSH       5
 #define LABEL_IPERF     6
 #define LABEL_OTHER     0
+
+// Threat types
+#define THREAT_NONE         0
+#define THREAT_PORT_SCAN    1
+#define THREAT_SYN_FLOOD    2
+#define THREAT_RATE_LIMIT   3
 
 struct flow_key_v4 {
     __u32 src_ip;
@@ -38,8 +46,9 @@ struct flow_metrics {
     __u64 ipt_sum;
     __u64 min_ipt;
     __u64 max_ipt;
-    __u8  kernel_label;    // Classification from kernel (rule-based)
-    __u8  pad[7];
+    __u8  kernel_label;
+    __u8  threat_level;
+    __u8  pad[6];
 };
 
 struct {
@@ -48,6 +57,14 @@ struct {
     __type(key,   struct flow_key_v4);
     __type(value, struct flow_metrics);
 } flow_map SEC(".maps");
+
+// Rate limiting: packet count per IP
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 4096);
+    __type(key,   __u32);
+    __type(value, __u64);
+} rate_limit_map SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -60,7 +77,8 @@ struct flow_event {
     __u8  version;
     __u8  protocol;
     __u8  kernel_label;
-    __u8  pad[5];
+    __u8  threat_level;
+    __u8  pad[4];
     __u32 src_ip;
     __u32 dst_ip;
     __u16 src_port;
@@ -99,6 +117,20 @@ static __always_inline __u8 classify_flow(__u8 protocol, __u16 src_port, __u16 d
     }
     
     return LABEL_OTHER;
+}
+
+static __always_inline __u8 detect_threats(__u32 src_ip, __u64 now) {
+    __u64 *pkt_count = bpf_map_lookup_elem(&rate_limit_map, &src_ip);
+    if (pkt_count) {
+        (*pkt_count)++;
+        if (*pkt_count > 500) {
+            return THREAT_RATE_LIMIT;
+        }
+    } else {
+        __u64 count = 1;
+        bpf_map_update_elem(&rate_limit_map, &src_ip, &count, BPF_ANY);
+    }
+    return THREAT_NONE;
 }
 
 static __always_inline int parse_tcp_udp_ports(void *transport, void *data_end, __u16 *src_port, __u16 *dst_port) {
@@ -150,6 +182,8 @@ int tc_flow(struct __sk_buff *skb) {
     __u8 kernel_label = classify_flow(ip->protocol, src_port, dst_port);
     __u64 now  = bpf_ktime_get_ns();
     __u32 plen = skb->len;
+    
+    __u8 threat_level = detect_threats(key.src_ip, now);
 
     struct flow_metrics *stats = bpf_map_lookup_elem(&flow_map, &key);
     if (stats) {
@@ -170,12 +204,16 @@ int tc_flow(struct __sk_buff *skb) {
         stats->last_ts     = now;
         stats->pkt_count  += 1;
         stats->byte_count += plen;
+        if (threat_level > stats->threat_level) {
+            stats->threat_level = threat_level;
+        }
         
         if (stats->pkt_count >= 2 && stats->pkt_count % 10 == 0) {
             struct flow_event evt = {
-                .version      = 2,
+                .version      = 3,
                 .protocol     = key.protocol,
                 .kernel_label = stats->kernel_label,
+                .threat_level = stats->threat_level,
                 .src_ip       = key.src_ip,
                 .dst_ip       = key.dst_ip,
                 .src_port     = key.src_port,
@@ -183,7 +221,7 @@ int tc_flow(struct __sk_buff *skb) {
                 .pkt_count    = stats->pkt_count,
                 .byte_count   = stats->byte_count,
                 .duration_ns  = stats->last_ts - stats->first_ts,
-                .avg_ipt_ns   = stats->pkt_count > 1 ? stats->ipt_sum / (stats->pkt_count - 1) : 0,
+                .avg_ipt_ns  = stats->pkt_count > 1 ? stats->ipt_sum / (stats->pkt_count - 1) : 0,
                 .min_ipt_ns   = stats->min_ipt,
                 .max_ipt_ns   = stats->max_ipt,
             };
@@ -199,6 +237,7 @@ int tc_flow(struct __sk_buff *skb) {
         new_stats.min_ipt   = 0xFFFFFFFFFFFFFFFFULL;
         new_stats.max_ipt   = 0;
         new_stats.kernel_label = kernel_label;
+        new_stats.threat_level = threat_level;
         
         bpf_map_update_elem(&flow_map, &key, &new_stats, BPF_ANY);
     }

@@ -40,8 +40,18 @@ KERNEL_LABELS = {
     6: "IPERF"
 }
 
+THREAT_LEVELS = {
+    0: "none",
+    1: "port_scan",
+    2: "syn_flood",
+    3: "rate_limit"
+}
+
 def kernel_label_name(val):
     return KERNEL_LABELS.get(val, "OTHER")
+
+def threat_level_name(val):
+    return THREAT_LEVELS.get(val, "none")
 
 @dataclass
 class FlowRecord:
@@ -57,6 +67,7 @@ class FlowRecord:
     min_ipt_ms: float
     max_ipt_ms: float
     kernel_label: str
+    threat: str
     label: str
 
 def label_flow(protocol, src_port, dst_port):
@@ -114,6 +125,7 @@ def parse_flows_from_map(raw_entries):
             dst_port = parse_hex(key[14]) | (parse_hex(key[15]) << 8)
             
             kernel_label_val = parse_hex(value[56]) if len(value) > 56 else 0
+            threat_val = parse_hex(value[57]) if len(value) > 57 else 0
             
             def le64(b, offset):
                 if offset + 8 > len(b):
@@ -152,6 +164,7 @@ def parse_flows_from_map(raw_entries):
                 min_ipt_ms=round(min_ipt_ms, 3),
                 max_ipt_ms=round(max_ipt_ms, 3),
                 kernel_label=kernel_label_name(kernel_label_val),
+                threat=threat_level_name(threat_val),
                 label=label_flow(protocol, src_port, dst_port)
             ))
         except Exception as e:
@@ -204,7 +217,7 @@ def export(flows, output_path):
     
     fieldnames = ["protocol", "src_ip", "dst_ip", "src_port", "dst_port", 
                   "pkt_count", "byte_count", "duration_ms", "avg_ipt_ms", 
-                  "min_ipt_ms", "max_ipt_ms", "kernel_label", "label"]
+                  "min_ipt_ms", "max_ipt_ms", "kernel_label", "threat", "label"]
     
     with open(output_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
@@ -223,6 +236,7 @@ def export(flows, output_path):
                 "min_ipt_ms": flow.min_ipt_ms,
                 "max_ipt_ms": flow.max_ipt_ms,
                 "kernel_label": flow.kernel_label,
+                "threat": flow.threat,
                 "label": flow.label
             })
     
