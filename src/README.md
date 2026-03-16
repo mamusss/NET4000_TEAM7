@@ -46,3 +46,18 @@ protocol,src_ip,dst_ip,src_port,dst_port,pkt_count,...,kernel_label,threat,label
 - `kernel_label` - Rule-based classification in kernel
 - `threat` - Detected threats (none, port_scan, rate_limit)
 - `label` - ML classification
+
+## Threat Detection
+
+Detects threats **in real-time at kernel level** before they reach user-space:
+
+| Threat | Description | Threshold |
+|--------|------------|-----------|
+| `port_scan` | Many different ports contacted | >50 unique ports |
+| `rate_limit` | Too many packets from same IP | >500 packets |
+| `none` | Normal traffic | - |
+
+Benefits:
+- Zero latency (runs in kernel)
+- Can drop/block malicious packets immediately
+- No user-space processing needed
