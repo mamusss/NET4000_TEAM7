@@ -7,6 +7,7 @@ set -euo pipefail
 IFACE=${1:-lo}
 DURATION=${2:-20}
 OUTPUT=${3:-ml/data/test_flows.csv}
+RANDOM_MODE=${4:-false}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -77,27 +78,48 @@ log "Starting traffic generation for ${DURATION}s..."
 
 # Start traffic generation in background
 generate_traffic() {
-    # ICMP
-    ping -c 50 127.0.0.1 &>/dev/null &
-    
-    # TCP (various ports)
-    for port in 80 443 22 8080; do
-        (timeout 2 bash -c "echo '' | nc -w1 127.0.0.1 $port" >/dev/null 2>&1 || true) &
-    done
-    
-    # UDP (DNS)
-    nslookup google.com 127.0.0.1 &>/dev/null || true
-    
-    # UDP (QUIC simulated)
-    (timeout 2 bash -c "echo 'quic' | nc -u -w1 127.0.0.1 443" 2>/dev/null || true) &
-    
-    # Multiple connections
-    for i in {1..20}; do
-        curl -s -o /dev/null --connect-timeout 1 http://127.0.0.1:8080/ 2>/dev/null &
-    done
-    
-    # Raw TCP/UDP
-    python3 -c "
+    if [[ "$RANDOM_MODE" == "true" ]]; then
+        # Random ICMP count (10-100)
+        ping -c $((RANDOM % 91 + 10)) 127.0.0.1 &>/dev/null &
+        
+        # Random TCP connections to random ports
+        for i in $(seq 1 $((RANDOM % 30 + 10))); do
+            port=$((RANDOM % 60000 + 1024))
+            (timeout 2 bash -c "echo '' | nc -w1 127.0.0.1 $port" >/dev/null 2>&1 || true) &
+        done
+        
+        # Random UDP/DNS
+        for i in $(seq 1 $((RANDOM % 15 + 5))); do
+            nslookup google.com 127.0.0.1 &>/dev/null || true
+        done
+        
+        # Random QUIC
+        for i in $(seq 1 $((RANDOM % 10 + 1))); do
+            (timeout 2 bash -c "echo 'quic' | nc -u -w1 127.0.0.1 443" 2>/dev/null || true) &
+        done
+        
+        # Random HTTP requests
+        for i in $(seq 1 $((RANDOM % 40 + 10))); do
+            port=$((RANDOM % 1000 + 8000))
+            curl -s -o /dev/null --connect-timeout 1 http://127.0.0.1:$port/ 2>/dev/null &
+        done
+    else
+        # Deterministic (fixed) traffic
+        ping -c 50 127.0.0.1 &>/dev/null &
+        
+        for port in 80 443 22 8080; do
+            (timeout 2 bash -c "echo '' | nc -w1 127.0.0.1 $port" >/dev/null 2>&1 || true) &
+        done
+        
+        nslookup google.com 127.0.0.1 &>/dev/null || true
+        
+        (timeout 2 bash -c "echo 'quic' | nc -u -w1 127.0.0.1 443" 2>/dev/null || true) &
+        
+        for i in {1..20}; do
+            curl -s -o /dev/null --connect-timeout 1 http://127.0.0.1:8080/ 2>/dev/null &
+        done
+        
+        python3 -c "
 import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.settimeout(1)
@@ -107,6 +129,7 @@ try:
 except: pass
 s.close()
 " &
+    fi
 }
 
 generate_traffic &
