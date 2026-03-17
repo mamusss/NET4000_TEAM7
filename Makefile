@@ -3,6 +3,7 @@
 PYTHON ?= ./ml_env/bin/python
 PIP ?= ./ml_env/bin/pip
 TRAIN_DATA ?= ml/data/test_flows.csv
+RANDOM ?= false
 
 # Default target: Run everything including performance comparison
 all: build test train compare bench
@@ -46,7 +47,7 @@ fix-perms:
 
 test:
 	@echo "Running all traffic capture tests..."
-	sudo bash src/test_ebpf_all_traffic.sh lo 20 ml/data/test_flows.csv
+	sudo bash src/test_ebpf_all_traffic.sh lo 20 ml/data/test_flows.csv $(RANDOM)
 	@$(MAKE) fix-perms
 
 train:

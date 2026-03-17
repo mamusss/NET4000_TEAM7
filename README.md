@@ -62,6 +62,7 @@ sudo ./ml_env/bin/python src/flow_monitor.py
 - `make shield-test`: Run end-to-end verification of the ML Shield.
 - `make shield-run`: Start the ML-driven mitigation daemon.
 - `make test`: Run traffic capture and export to CSV.
+- `make test RANDOM=true`: Run traffic capture with randomized traffic (variable flow counts).
 - `make train`: Train ML models on captured data.
 - `make compare`: Compare kernel vs user-space classifier performance and generate impact plots.
 - `make bench`: Run RTT performance benchmark.
