@@ -1,34 +1,27 @@
 #!/usr/bin/env python3
 """
 ebpf_export_full.py
-Reads flow data from BPF map and perf ring buffer.
-Supports real-time events and final flow dump.
+Pro-grade flow exporter with IPv4/IPv6 support and TCP flags extraction.
 """
 
-import argparse
-import csv
-import json
-import os
-import socket
-import struct
-import subprocess
-import sys
-import time
-import threading
-from collections import Counter
-from dataclasses import dataclass
+import sys, os, time, struct, socket, argparse, subprocess, json
+from dataclasses import dataclass, fields
+from collections import defaultdict
+
 
 def log(msg, file=sys.stdout):
-    print(msg, file=file)
-    file.flush()
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", file=file)
+
 
 def die(msg):
-    print(f"ERROR: {msg}", file=sys.stderr)
+    log(f"ERROR: {msg}", file=sys.stderr)
     sys.exit(1)
+
 
 def check_root():
     if os.geteuid() != 0:
         die("Must run as root (use sudo)")
+
 
 KERNEL_LABELS = {
     0: "OTHER",
@@ -37,14 +30,18 @@ KERNEL_LABELS = {
     3: "HTTPS",
     4: "DNS",
     5: "SSH",
-    6: "IPERF"
+    6: "IPERF",
+    7: "QUIC",
 }
+
 
 def kernel_label_name(val):
     return KERNEL_LABELS.get(val, "OTHER")
 
+
 @dataclass
 class FlowRecord:
+    version: int
     protocol: int
     src_ip: str
     dst_ip: str
@@ -56,13 +53,17 @@ class FlowRecord:
     avg_ipt_ms: float
     min_ipt_ms: float
     max_ipt_ms: float
+    tcp_flags: int
     kernel_label: str
     label: str
 
+
 def label_flow(protocol, src_port, dst_port):
     ports = {src_port, dst_port}
-    if protocol == 1:
+    if protocol in [1, 58]:
         return "ICMP"
+    if protocol == 17 and (ports & {443, 8443}):
+        return "QUIC"
     if ports & {80, 443, 8000, 8080, 8888, 5000}:
         return "HTTP"
     if ports & {53, 5353}:
@@ -71,208 +72,163 @@ def label_flow(protocol, src_port, dst_port):
         return "SSH"
     if ports & {5201, 5202, 5203}:
         return "IPERF3"
-    if ports & {21}:
-        return "FTP"
-    if ports & {25, 587, 465}:
-        return "SMTP"
-    if protocol == 6:
-        return "TCP_OTHER"
-    if protocol == 17:
-        return "UDP_OTHER"
     return "OTHER"
 
-def ip_to_str(ip):
-    return socket.inet_ntoa(struct.pack('I', ip))
+
+def ip_to_str(ver, ip_bytes):
+    if ver == 4:
+        return socket.inet_ntop(socket.AF_INET, ip_bytes[:4])
+    return socket.inet_ntop(socket.AF_INET6, ip_bytes)
+
 
 def parse_flows_from_map(raw_entries):
-    """Parse raw bpftool output into flow records."""
     flows = []
-    
-    def parse_hex(val):
-        if isinstance(val, str):
-            return int(val, 16)
-        return val
-    
+
+    def le64(b, offset):
+        return struct.unpack("<Q", b[offset : offset + 8])[0]
+
+    def to_bytes(raw):
+        # Handle list of hex strings or a single hex string
+        if isinstance(raw, list):
+            return bytes([int(x, 16) for x in raw])
+        if isinstance(raw, str):
+            # Handle space-separated hex bytes if necessary
+            return bytes.fromhex(raw.replace("0x", ""))
+        return bytes(raw)
+
     for entry in raw_entries:
         try:
-            key = entry.get("key", [])
-            value = entry.get("value", [])
-            
-            if not key or not value:
-                continue
-            
-            if len(key) < 16:
-                continue
-                
-            if len(value) < 64:
-                continue
-            
-            src_ip = parse_hex(key[0]) | (parse_hex(key[1]) << 8) | (parse_hex(key[2]) << 16) | (parse_hex(key[3]) << 24)
-            dst_ip = parse_hex(key[4]) | (parse_hex(key[5]) << 8) | (parse_hex(key[6]) << 16) | (parse_hex(key[7]) << 24)
-            protocol = parse_hex(key[8])
-            src_port = parse_hex(key[12]) | (parse_hex(key[13]) << 8)
-            dst_port = parse_hex(key[14]) | (parse_hex(key[15]) << 8)
-            
-            kernel_label_val = parse_hex(value[56]) if len(value) > 56 else 0
-            
-            def le64(b, offset):
-                if offset + 8 > len(b):
-                    return 0
-                val = 0
-                for i in range(8):
-                    val |= parse_hex(b[offset + i]) << (i * 8)
-                return val
-            
-            pkt_count = le64(value, 0)
-            byte_count = le64(value, 8)
-            first_ts = le64(value, 16)
-            last_ts = le64(value, 24)
-            ipt_sum = le64(value, 32)
-            min_ipt = le64(value, 40)
-            max_ipt = le64(value, 48)
-            
-            if pkt_count == 0:
-                continue
-            
+            key_raw = to_bytes(entry["key"])
+            val_raw = to_bytes(entry["value"])
+
+            # key: src_ip[4], dst_ip[4], proto(1), ver(1), src_port(2), dst_port(2) = 16+16+1+1+2+2 = 38 bytes
+            # BPF might pad the key to 40 bytes or more.
+            # src_ip is 0-16, dst_ip is 16-32.
+            src_ip_bytes = key_raw[0:16]
+            dst_ip_bytes = key_raw[16:32]
+            proto = key_raw[32]
+            ver = key_raw[33]
+            # Ports are stored in host byte order (little endian on x86)
+            src_port = struct.unpack("<H", key_raw[34:36])[0]
+            dst_port = struct.unpack("<H", key_raw[36:38])[0]
+
+            # value: pkt_count(8), byte_count(8), first_ts(8), last_ts(8), ipt_sum(8), min_ipt(8), max_ipt(8), tcp_flags(1), label(1), pad(6) = 64 bytes
+            pkts = le64(val_raw, 0)
+            bytes_count = le64(val_raw, 8)
+            first_ts = le64(val_raw, 16)
+            last_ts = le64(val_raw, 24)
+            ipt_sum = le64(val_raw, 32)
+            min_ipt = le64(val_raw, 40)
+            max_ipt = le64(val_raw, 48)
+            tcp_flags = val_raw[56]
+            k_label = val_raw[57]
+
             duration_ms = (last_ts - first_ts) / 1e6
-            avg_ipt_ms = (ipt_sum / (pkt_count - 1)) / 1e6 if pkt_count > 1 else 0.0
-            min_ipt_ms = min_ipt / 1e6 if min_ipt < 0xFFFFFFFFFFFFFFFF else 0.0
-            max_ipt_ms = max_ipt / 1e6 if max_ipt > 0 else 0.0
-            
-            flows.append(FlowRecord(
-                protocol=protocol,
-                src_ip=ip_to_str(src_ip),
-                dst_ip=ip_to_str(dst_ip),
-                src_port=src_port,
-                dst_port=dst_port,
-                pkt_count=pkt_count,
-                byte_count=byte_count,
-                duration_ms=round(duration_ms, 3),
-                avg_ipt_ms=round(avg_ipt_ms, 3),
-                min_ipt_ms=round(min_ipt_ms, 3),
-                max_ipt_ms=round(max_ipt_ms, 3),
-                kernel_label=kernel_label_name(kernel_label_val),
-                label=label_flow(protocol, src_port, dst_port)
-            ))
+            avg_ipt_ms = (ipt_sum / (pkts - 1)) / 1e6 if pkts > 1 else 0
+            min_ipt_ms = (min_ipt / 1e6) if min_ipt < 0xFFFFFFFFFFFFFFFF else 0
+            max_ipt_ms = (max_ipt / 1e6)
+
+            flows.append(
+                FlowRecord(
+                    version=ver,
+                    protocol=proto,
+                    src_ip=ip_to_str(ver, src_ip_bytes),
+                    dst_ip=ip_to_str(ver, dst_ip_bytes),
+                    src_port=src_port,
+                    dst_port=dst_port,
+                    pkt_count=pkts,
+                    byte_count=bytes_count,
+                    duration_ms=round(duration_ms, 3),
+                    avg_ipt_ms=round(avg_ipt_ms, 3),
+                    min_ipt_ms=round(min_ipt_ms, 3),
+                    max_ipt_ms=round(max_ipt_ms, 3),
+                    tcp_flags=tcp_flags,
+                    kernel_label=kernel_label_name(k_label),
+                    label=label_flow(proto, src_port, dst_port),
+                )
+            )
         except Exception as e:
+            log(f"Failed to parse flow entry: {e}")
             continue
-    
     return flows
 
+
 def read_bpf_map(map_name="flow_map"):
-    """Read all flows from BPF hash map."""
+    cmd = ["bpftool", "map", "show", "name", map_name, "-j"]
     try:
-        result = subprocess.run(
-            ["bpftool", "map", "show", "-j"],
-            capture_output=True, text=True, check=True
-        )
-        maps = json.loads(result.stdout)
-        
-        map_id = None
-        for m in maps:
-            if m.get("name") == map_name:
-                map_id = m["id"]
-                break
-        
-        if map_id is None:
+        res = subprocess.check_output(cmd)
+        if not res:
+            log(f"No map found with name {map_name}")
+            return []
+        map_info = json.loads(res)
+        if not map_info:
+            log(f"Map {map_name} info is empty")
             return []
         
-        result = subprocess.run(
-            ["bpftool", "map", "dump", "id", str(map_id), "-j"],
-            capture_output=True, text=True, check=True
-        )
-        return json.loads(result.stdout)
-    
+        # bpftool can return a list or a single dict
+        if isinstance(map_info, list):
+            map_id = map_info[0]["id"]
+        else:
+            map_id = map_info["id"]
+            
+        log(f"Reading from map ID {map_id} ({map_name})")
+        dump = subprocess.check_output(["bpftool", "map", "dump", "id", str(map_id), "-j"])
+        return json.loads(dump)
+    except subprocess.CalledProcessError as e:
+        log(f"bpftool command failed: {e}")
+        return []
     except Exception as e:
-        log(f"Error reading map: {e}")
+        import traceback
+        log(f"Failed to read BPF map {map_name}: {e}")
+        traceback.print_exc()
         return []
 
+
 def verify_bpf_attached(iface):
-    """Verify BPF filter is attached."""
-    try:
-        result = subprocess.run(
-            ["tc", "filter", "show", "dev", iface, "ingress"],
-            capture_output=True, text=True, check=True
-        )
-        return "bpf" in result.stdout.lower()
-    except:
-        return False
+    res = subprocess.getoutput(f"tc filter show dev {iface} ingress")
+    if "tc_flow" not in res:
+        die(f"BPF program not attached to {iface}")
+
 
 def export(flows, output_path):
-    """Export flows to CSV."""
-    os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
-    
-    fieldnames = ["protocol", "src_ip", "dst_ip", "src_port", "dst_port", 
-                  "pkt_count", "byte_count", "duration_ms", "avg_ipt_ms", 
-                  "min_ipt_ms", "max_ipt_ms", "kernel_label", "label"]
-    
-    with open(output_path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
-        w.writeheader()
+    import csv
+
+    if not flows:
+        log("No flows to export.")
+        return
+
+    field_names = [f.name for f in fields(FlowRecord)]
+    file_exists = os.path.isfile(output_path)
+
+    with open(output_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=field_names)
+        if not file_exists:
+            writer.writeheader()
         for flow in flows:
-            w.writerow({
-                "protocol": flow.protocol,
-                "src_ip": flow.src_ip,
-                "dst_ip": flow.dst_ip,
-                "src_port": flow.src_port,
-                "dst_port": flow.dst_port,
-                "pkt_count": flow.pkt_count,
-                "byte_count": flow.byte_count,
-                "duration_ms": flow.duration_ms,
-                "avg_ipt_ms": flow.avg_ipt_ms,
-                "min_ipt_ms": flow.min_ipt_ms,
-                "max_ipt_ms": flow.max_ipt_ms,
-                "kernel_label": flow.kernel_label,
-                "label": flow.label
-            })
-    
-    log(f"\nSaved {len(flows)} flows to {output_path}")
-    
-    counts = Counter(f.label for f in flows)
-    for lbl, cnt in sorted(counts.items()):
-        log(f"  {lbl:12s}: {cnt} flows")
-    
-    return len(flows)
+            writer.writerow(flow.__dict__)
+
+    log(f"Saved {len(flows)} flows to {output_path}")
+
 
 def main():
-    parser = argparse.ArgumentParser(description="eBPF Flow Exporter (Full 5-tuple)")
+    check_root()
+    parser = argparse.ArgumentParser()
     parser.add_argument("--iface", type=str, default="lo")
     parser.add_argument("--duration", type=int, default=15)
     parser.add_argument("--output", type=str, default="ml/data/real_flows.csv")
     parser.add_argument("--bpf-obj", type=str, default="tc_flow_full.bpf.o")
     args = parser.parse_args()
-    
-    log("=== eBPF Full Flow Exporter (5-tuple) ===")
-    log(f"Interface: {args.iface}")
-    log(f"Duration: {args.duration}s")
-    log(f"Output: {args.output}")
-    
-    check_root()
-    
-    if not verify_bpf_attached(args.iface):
-        die(f"No BPF filter on {args.iface}. Run attach script first.")
-    
-    log(f"\nCapturing for {args.duration}s...")
-    log("Generating test traffic...\n")
-    
-    start = time.time()
+
+    verify_bpf_attached(args.iface)
+
+    log(f"Capturing for {args.duration}s...")
     time.sleep(args.duration)
-    
-    log(f"Capture completed in {time.time() - start:.1f}s")
+
     log("Reading flow data...")
-    
-    raw = read_bpf_map("flow_map")
-    
-    if not raw:
-        die("No flows captured - no traffic detected during capture period")
-    
-    flows = parse_flows_from_map(raw)
-    
-    if not flows:
-        die("Failed to parse any flows from BPF map")
-    
-    count = export(flows, args.output)
-    log(f"\n=== Export Complete: {count} flows ===")
+    raw_entries = read_bpf_map("flow_map")
+    flows = parse_flows_from_map(raw_entries)
+    export(flows, args.output)
+
 
 if __name__ == "__main__":
     main()

@@ -1,6 +1,6 @@
 #include "bpf/vmlinux.h"
-#include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
+#include <bpf/bpf_helpers.h>
 
 struct {
   __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
