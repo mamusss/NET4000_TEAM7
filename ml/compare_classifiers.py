@@ -100,7 +100,7 @@ def train_ml_model(df):
     clf.fit(X_train, y_train)
 
     y_pred = clf.predict(X_test)
-    df = df.iloc[X_test.index]
+    df = df.loc[X_test.index]
     df["ml_label"] = le.inverse_transform(y_pred)
 
     return df

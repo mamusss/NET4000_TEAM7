@@ -48,7 +48,7 @@ make build
 sudo ./ml_env/bin/python src/flow_monitor.py
 
 # 4. Run Full capture and analysis pipeline
-echo admin | sudo -S make all
+sudo make all
 ```
 
 ## Makefile Commands
@@ -57,8 +57,9 @@ echo admin | sudo -S make all
 - `make test`: Run traffic capture and export to CSV.
 - `make train`: Train ML models on captured data.
 - `make compare`: Compare kernel vs user-space classifier performance.
-- `make all`: Run build, test, train, and compare in sequence.
 - `make bench`: Run RTT performance benchmark.
+- `make all`: Run build, test, train, and compare in sequence.
+- `make verify`: Run a clean build and execute the full pipeline from scratch.
 
 ## Project Structure
 
@@ -71,7 +72,7 @@ echo admin | sudo -S make all
 
 ## Verification
 
-To verify the entire pipeline in one go:
+To verify the entire pipeline (cleaning, building, testing, training, and benchmarking) in one command:
 ```bash
-echo admin | sudo -S make clean && make build && echo admin | sudo -S make all && echo admin | sudo -S make bench
+sudo make verify
 ```

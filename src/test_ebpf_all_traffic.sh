@@ -82,7 +82,7 @@ generate_traffic() {
     
     # TCP (various ports)
     for port in 80 443 22 8080; do
-        (timeout 2 bash -c "echo '' | nc -w1 127.0.0.1 $port" 2>/dev/null || true) &
+        (timeout 2 bash -c "echo '' | nc -w1 127.0.0.1 $port" >/dev/null 2>&1 || true) &
     done
     
     # UDP (DNS)
