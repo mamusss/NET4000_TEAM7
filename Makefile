@@ -24,6 +24,14 @@ build:
 	clang -O2 -g -target bpf -c src/tc_icmp_rtt.bpf.c -o src/tc_icmp_rtt.bpf.o -I src/
 	@echo "Build successful."
 
+shield-test: build
+	@echo "Running Adaptive ML Shield end-to-end test..."
+	sudo bash scripts/test_shield.sh
+
+shield-run: build
+	@echo "Starting ML Shield Daemon in foreground..."
+	sudo $(PYTHON) src/ml_shield_daemon.py
+
 fix-perms:
 	@echo "Fixing file permissions..."
 	@if [ -n "$$SUDO_USER" ]; then \

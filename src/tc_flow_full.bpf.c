@@ -12,6 +12,11 @@
 #define IPPROTO_ICMP 1
 #define IPPROTO_ICMPV6 58
 
+// TC action codes
+#define TC_ACT_OK 0
+#define TC_ACT_SHOT 2
+#define TC_ACT_UNSPEC -1
+
 // Label IDs for kernel-space classification
 #define LABEL_ICMP 1
 #define LABEL_HTTP 2
@@ -74,6 +79,22 @@ struct {
     __type(value, __u64);
 } rate_limit_map SEC(".maps");
 
+// Blacklist map for active mitigation
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1024);
+    __type(key,   __u32); // IPv4 address
+    __type(value, __u64); // Timestamp of block
+} block_list_map SEC(".maps");
+
+// Global configuration
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 2);
+    __type(key,   __u32);
+    __type(value, __u32); // 0 = Passive/Active, 1 = Threshold
+} config_map SEC(".maps");
+
 struct {
   __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
   __uint(max_entries, 128);
@@ -131,10 +152,15 @@ static __always_inline __u8 classify_flow(__u8 protocol, __u16 src_port,
 }
 
 static __always_inline __u8 detect_threats(__u32 src_ip) {
+    __u32 threshold_idx = 1;
+    __u32 *threshold_ptr = bpf_map_lookup_elem(&config_map, &threshold_idx);
+    __u32 threshold = threshold_ptr ? *threshold_ptr : 500;
+    if (threshold == 0) threshold = 500; // Safety fallback
+
     __u64 *pkt_count = bpf_map_lookup_elem(&rate_limit_map, &src_ip);
     if (pkt_count) {
         (*pkt_count)++;
-        if (*pkt_count > 500) {
+        if (*pkt_count > threshold) {
             return THREAT_RATE_LIMIT;
         }
     } else {
@@ -166,12 +192,35 @@ int tc_flow(struct __sk_buff *skb) {
     struct iphdr *ip = data + 14;
     if ((void *)(ip + 1) > data_end)
       return BPF_OK;
+    
+    // Check block list
+    __u64 *blocked = bpf_map_lookup_elem(&block_list_map, &ip->saddr);
+    if (blocked) {
+        __u32 zero = 0;
+        __u32 *config = bpf_map_lookup_elem(&config_map, &zero);
+        if (config && *config == 1) {
+            return TC_ACT_SHOT;
+        }
+    }
+
     key.version = 4;
     key.src_ip[0] = ip->saddr;
     key.dst_ip[0] = ip->daddr;
     protocol = ip->protocol;
     ip_ihl = (ip->ihl & 0x0f) * 4;
     threat_level = detect_threats(ip->saddr);
+    
+    // Auto-block if threat is high and mitigation is on
+    if (threat_level != THREAT_NONE) {
+        __u32 zero = 0;
+        __u32 *config = bpf_map_lookup_elem(&config_map, &zero);
+        if (config && *config == 1) {
+            __u64 now = bpf_ktime_get_ns();
+            bpf_map_update_elem(&block_list_map, &ip->saddr, &now, BPF_ANY);
+            return TC_ACT_SHOT;
+        }
+    }
+
   } else if (eth_proto == ETH_P_IPV6) {
     struct ipv6hdr *ip6 = data + 14;
     if ((void *)(ip6 + 1) > data_end)
