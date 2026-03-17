@@ -9,23 +9,25 @@ Capture, analyze, and classify network traffic directly in the Linux kernel usin
 
 ## Key Features
 
+- **Adaptive ML Shield**: Real-time, zero-latency mitigation engine that drops malicious traffic at the kernel level using eBPF `block_list` maps.
+- **Intelligent ML Enforcement**: A background daemon that performs live inference on network flows and automatically blacklists IPs flagged by the Random Forest model.
+- **Dynamic Kernel Tuning**: Adjust packet thresholds and toggle mitigation modes on-the-fly via eBPF `config` maps without recompiling.
 - **Unified IPv4/IPv6 Support**: Single eBPF program handles both address families natively using a unified flow key.
 - **TCP Flags Extraction**: Captures and aggregates TCP flags (SYN, ACK, FIN, RST, etc.) to improve ML classification accuracy and security detection.
-- **Real-time TUI Monitor**: A high-performance terminal dashboard for live flow tracking and observability.
-- **Automated Pipeline**: Integrated Makefile for building, testing, training, and benchmarking.
-- **Performance Comparison**: Automated comparison between in-kernel rule-based and user-space ML-based classification.
+- **Real-time TUI Monitor**: Enhanced dashboard for live flow tracking and manual "Smart Shield" control.
 
 ## Architecture
 
 ```mermaid
 graph TD
     A[Network Interface lo, eth0] -->|IPv4/IPv6 Packets| B(eBPF Unified TC Hook)
-    B -->|5-tuple + Flags| C{Kernel Classifier}
-    C -->|Rule-based Labeling| D[(eBPF Hash Map)]
-    D -->|Live View| E[Rich TUI Monitor]
-    D -->|Polling| F[Python Flow Exporter]
-    F -->|CSV Dataset| G[ML Training Pipeline]
-    G -->|Model Inference| H[Comparison & Reports]
+    B -->|Check Blocklist| C{Kernel Shield}
+    C -->|DROP| D[Malicious Traffic]
+    C -->|ALLOW| E[5-tuple + Flags Extraction]
+    E -->|Live View| F[Rich TUI Monitor]
+    E -->|Polling| G[ML Shield Daemon]
+    G -->|Inference| H[Random Forest Model]
+    H -->|Auto-Block| B
 ```
 
 ## Prerequisites
@@ -44,19 +46,24 @@ make install-deps
 # 2. Build eBPF Programs
 make build
 
-# 3. Monitor Traffic Live (In a separate terminal)
-sudo ./ml_env/bin/python src/flow_monitor.py
+# 3. Train ML Model
+make train
 
-# 4. Run Full capture and analysis pipeline
-sudo make all
+# 4. Start the Intelligent Shield (In a separate terminal)
+sudo make shield-run
+
+# 5. Monitor Live (In a separate terminal)
+sudo ./ml_env/bin/python src/flow_monitor.py
 ```
 
 ## Makefile Commands
 
 - `make build`: Compile eBPF C programs.
+- `make shield-test`: Run end-to-end verification of the ML Shield.
+- `make shield-run`: Start the ML-driven mitigation daemon.
 - `make test`: Run traffic capture and export to CSV.
 - `make train`: Train ML models on captured data.
-- `make compare`: Compare kernel vs user-space classifier performance.
+- `make compare`: Compare kernel vs user-space classifier performance and generate impact plots.
 - `make bench`: Run RTT performance benchmark.
 - `make all`: Run build, test, train, and compare in sequence.
 - `make verify`: Run a clean build and execute the full pipeline from scratch.

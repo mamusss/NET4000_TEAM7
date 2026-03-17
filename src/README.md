@@ -13,7 +13,8 @@ sudo bash src/test_ebpf_all_traffic.sh lo 20 ml/data/real_flows.csv
 1. Captures network flows with eBPF
 2. Classifies traffic (HTTP, DNS, SSH, ICMP, etc.)
 3. Detects threats in real-time (port scan, rate limiting)
-4. Compares kernel vs ML classification
+4. **Adaptive ML Shield**: Mitigates threats by dropping packets in kernel.
+5. Compares kernel vs ML classification
 
 ## Run Separately
 

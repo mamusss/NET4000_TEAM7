@@ -29,6 +29,10 @@ shield-test: build
 	sudo bash scripts/test_shield.sh
 
 shield-run: build
+	@echo "Attaching BPF to loopback interface..."
+	sudo tc qdisc del dev lo clsact 2>/dev/null || true
+	sudo tc qdisc add dev lo clsact
+	sudo tc filter add dev lo ingress bpf direct-action obj src/tc_flow_full.bpf.o sec tc
 	@echo "Starting ML Shield Daemon in foreground..."
 	sudo $(PYTHON) src/ml_shield_daemon.py
 
@@ -52,6 +56,8 @@ train:
 compare:
 	@echo "Comparing Kernel vs User-space (ML) classifiers..."
 	$(PYTHON) ml/compare_classifiers.py --input $(TRAIN_DATA)
+	@echo "Generating Shield Impact visualization..."
+	$(PYTHON) ml/plot_shield_impact.py
 
 bench:
 	@echo "Running RTT benchmark..."
