@@ -6,3 +6,5 @@ __pycache__/
 *.csv
 runs/
 src/__pycache__/
+ml/models/
+ml/results/

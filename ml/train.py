@@ -139,6 +139,13 @@ for name, model in models.items():
     print(f"  Infer time:   {infer_time:.4f} ms/flow")
     print(classification_report(y_test, y_pred, zero_division=0))
 
+import joblib
+os.makedirs("ml/models", exist_ok=True)
+joblib.dump(models["Random Forest"], "ml/models/rf_model.pkl")
+joblib.dump(le, "ml/models/label_encoder.pkl")
+joblib.dump(FEATURES, "ml/models/features.pkl")
+print(f"\nModel and LabelEncoder saved to ml/models/")
+
 # 4. Confusion matrices
 all_preds = np.concatenate([res["y_pred"] for res in results.values()])
 unique_labels = np.unique(np.concatenate([y_test, all_preds]))
