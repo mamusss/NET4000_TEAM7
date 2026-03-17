@@ -1,88 +1,46 @@
 # eBPF Flow Capture Pipeline
 
-This directory contains the eBPF-based flow capture system that tracks network traffic flows and exports them to CSV for ML training.
+Technical documentation for the high-performance eBPF capture suite.
 
-## Quick Start
+## Core Component: tc_flow_full.bpf.c
 
+This program implements a unified IPv4/IPv6 flow tracker attached to the Traffic Control (TC) ingress hook.
+
+### Unified Flow Key
+The program handles dual-stack traffic using a 40-byte `flow_key`:
+- `src_ip[4]`, `dst_ip[4]`: 16-byte address buffers.
+- `protocol`: L4 protocol (TCP=6, UDP=17, ICMP=1, ICMPv6=58).
+- `version`: IP version (4 or 6).
+- `src_port`, `dst_port`: L4 source and destination ports.
+
+### TCP Flags Extraction
+For TCP traffic, the program extracts flags from the header and aggregates them using a bitwise OR operation across the flow's lifetime.
+- SYN (0x02), ACK (0x10), FIN (0x01), RST (0x04), PSH (0x08), URG (0x20)
+- These flags are exposed in the `tcp_flags` column of the exported dataset, enabling advanced ML analysis for session behavior and threat detection.
+
+## Monitoring & Exporting
+
+- **Real-time TUI**: `src/flow_monitor.py` provides a live view of active flows, including packet counts, byte sizes, and classifications. Requires the `rich` library.
+- **CSV Exporter**: `src/ebpf_export_full.py` polls the `flow_map` and writes sanitized flow records to a CSV file.
+
+### Output CSV Columns
+| Column | Description |
+|--------|-------------|
+| `version` | IP version (4 or 6) |
+| `protocol` | L4 protocol ID |
+| `src_ip`, `dst_ip` | Source and destination addresses (string) |
+| `src_port`, `dst_port` | L4 ports |
+| `pkt_count`, `byte_count` | Aggregated counters |
+| `duration_ms` | Flow lifetime in milliseconds |
+| `avg_ipt_ms` | Average Inter-packet Time |
+| `tcp_flags` | Cumulative TCP flags bitmask |
+| `kernel_label` | Rule-based classification from the kernel |
+| `label` | Ground truth classification for ML training |
+
+## Build & Attach
+
+The Makefile handles standard build and attach operations:
 ```bash
-# Prime sudo first
-sudo -v
-
-# Run the full pipeline (capture 30 seconds on loopback)
-bash src/run_ebpf_export.sh lo 30 ml/data/real_flows.csv
+make build
+sudo tc filter add dev lo ingress bpf da obj src/tc_flow_full.bpf.o sec tc
 ```
-
-## Files
-
-- **run_ebpf_export.sh** - Main script that compiles, attaches, captures, exports
-- **ebpf_export.py** - Python script that reads BPF map and exports to CSV
-- **tc_flow.bpf.c** - eBPF TC program (3-tuple: protocol + ports)
-- **tc_flow_full.bpf.c** - Full eBPF TC program (5-tuple: IPs + protocol + ports)
-- **test_ebpf_all_traffic.sh** - Comprehensive test with all traffic types
-- **ebpf_export_full.py** - Exporter for tc_flow_full.bpf.c
-
-## Two BPF Programs
-
-### 1. tc_flow.bpf.c (Original - 3-tuple)
-- Tracks: protocol, src_port, dst_port
-- Simpler, less memory
-- Good for quick classification by port
-
-### 2. tc_flow_full.bpf.c (Enhanced - 5-tuple)
-- Tracks: src_ip, dst_ip, protocol, src_port, dst_port
-- Full connection tracking
-- Includes: min_ipt_ms, max_ipt_ms, duration_ms, avg_ipt_ms
-
-## Traffic Types Detected
-
-- **ICMP** - Ping requests
-- **TCP** - HTTP (80, 443, 8080), SSH (22), FTP (21), SMTP (25, 465, 587)
-- **UDP** - DNS (53)
-- **Other** - Unknown protocols
-
-## Output Format
-
-CSV with headers:
-```
-protocol,src_ip,dst_ip,src_port,dst_port,pkt_count,byte_count,duration_ms,avg_ipt_ms,min_ipt_ms,max_ipt_ms,label
-```
-
-Example:
-```
-1,127.0.0.1,127.0.0.1,0,60402,1,98,0.0,0.0,0.0,0.0,ICMP
-6,127.0.0.1,127.0.0.1,58918,8080,1,74,0.0,0.0,0.0,0.0,HTTP
-17,127.0.0.1,127.0.0.1,37844,53,1,70,0.0,0.0,0.0,0.0,DNS
-```
-
-## Requirements
-
-- Root privileges (sudo)
-- clang with BPF target support
-- iproute2 (tc command)
-- bpftool
-- Python 3
-
-## Testing
-
-Run comprehensive test with all traffic types:
-```bash
-sudo bash src/test_ebpf_all_traffic.sh lo 20 ml/data/real_flows.csv
-```
-
-## Troubleshooting
-
-### "Map 'flow_map' not found"
-The eBPF program isn't attached. Check:
-```bash
-sudo tc filter show dev lo ingress
-sudo bpftool map show | grep flow_map
-```
-
-### "No flows captured"
-- No traffic during capture period
-- Wrong interface selected
-- Interface was down
-
-### Interface Selection
-- **lo** - Loopback (local traffic, easiest)
-- **eth0/wlo1** - Physical interfaces
