@@ -31,6 +31,9 @@ check_root "$@"
 log "=== eBPF Flow Capture Test (All Traffic Types) ==="
 log "Interface: $IFACE, Duration: ${DURATION}s"
 
+# Ensure fresh output file to avoid column mismatch
+rm -f "$OUTPUT"
+
 # Compile BPF
 log "Compiling tc_flow_full.bpf.c..."
 clang -O2 -g -target bpf -c "$SCRIPT_DIR/tc_flow_full.bpf.c" \
@@ -79,11 +82,14 @@ generate_traffic() {
     
     # TCP (various ports)
     for port in 80 443 22 8080; do
-        (timeout 2 bash -c "echo '' | nc -w1 127.0.0.1 $port" 2>/dev/null || true) &
+        (timeout 2 bash -c "echo '' | nc -w1 127.0.0.1 $port" >/dev/null 2>&1 || true) &
     done
     
     # UDP (DNS)
     nslookup google.com 127.0.0.1 &>/dev/null || true
+    
+    # UDP (QUIC simulated)
+    (timeout 2 bash -c "echo 'quic' | nc -u -w1 127.0.0.1 443" 2>/dev/null || true) &
     
     # Multiple connections
     for i in {1..20}; do
@@ -123,9 +129,9 @@ if [[ -f "$OUTPUT" ]]; then
         log "Output preview:"
         head -5 "$OUTPUT"
         
-    # Check for different traffic types - count unique labels
-    ICMP_COUNT=$(grep -c "^1," "$OUTPUT" 2>/dev/null || echo 0)
-    TCP_COUNT=$(grep -c "^6," "$OUTPUT" 2>/dev/null || echo 0)
+    # Check for different traffic types - protocol is the second field now
+    ICMP_COUNT=$(cut -d, -f2 "$OUTPUT" | grep -E "^(1|58)$" | wc -l)
+    TCP_COUNT=$(cut -d, -f2 "$OUTPUT" | grep -E "^6$" | wc -l)
     
     log "Traffic types detected:"
     log "  ICMP flows: $ICMP_COUNT"

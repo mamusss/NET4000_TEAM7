@@ -3,6 +3,8 @@ import argparse
 import csv
 import os
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
@@ -63,10 +65,7 @@ def main():
             fontsize=10,
         )
 
-    details = (
-        f"Overhead: {overhead_pct:.2f}%\\n"
-        f"eBPF map avg RTT: {bpf_avg:.4f} ms"
-    )
+    details = f"Overhead: {overhead_pct:.2f}%\\n" f"eBPF map avg RTT: {bpf_avg:.4f} ms"
     ax.text(
         0.02,
         0.98,
